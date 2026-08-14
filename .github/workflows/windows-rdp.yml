@@ -13,9 +13,6 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
-          
-          # این قانون کمکی برای باز کردن پورت روی سابنت تیلاسکیل
-          New-NetFirewallRule -DisplayName "Allow RDP Tailscale" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -RemoteAddress 100.64.0.0/10
 
       - name: 2. Create Admin Account
         run: |
@@ -25,37 +22,45 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "CynetAdmin" -ErrorAction SilentlyContinue
           net user runneradmin Cynet@2026
 
-      - name: 3. Install & Connect Tailscale VPN (HARD FIREWALL OFF)
+      - name: 3. Install Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          # دانلود و نصب تیلاسکیل
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
-          
           Start-Sleep -Seconds 5
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
-          
           Start-Sleep -Seconds 8
-          Write-Host "Restarting Remote Desktop Service..." -ForegroundColor Cyan
+
+      - name: 4. DISABLE FIREWALL COMPLETELY (3 Methods)
+        run: |
+          Write-Host "=== Method 1: netsh advfirewall ===" -ForegroundColor Cyan
+          netsh advfirewall set allprofiles state off
+          
+          Write-Host "=== Method 2: Set-NetFirewallProfile ===" -ForegroundColor Cyan
+          Set-NetFirewallProfile -All -Enabled False
+          
+          Write-Host "=== Method 3: Disable via registry (just in case) ===" -ForegroundColor Cyan
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile" -Name "EnableFirewall" -Value 0
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile" -Name "EnableFirewall" -Value 0
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile" -Name "EnableFirewall" -Value 0
+
+          Write-Host "=== Adding explicit RDP rule (just to be safe) ===" -ForegroundColor Cyan
+          netsh advfirewall firewall add rule name="RDP_Allow" dir=in action=allow protocol=TCP localport=3389
+
+          Write-Host "=== Restarting RDP Service ===" -ForegroundColor Cyan
           Restart-Service TermService -Force
           Start-Sleep -Seconds 5
 
-          # ============================================================
-          # روش قطعی برای خاموش کردن کامل فایروال (با دستور قدیمی netsh)
-          # ============================================================
-          Write-Host "Disabling Windows Firewall via netsh..." -ForegroundColor Yellow
-          netsh advfirewall set allprofiles state off
-          # ============================================================
-
-          Write-Host "Checking RDP listening ports:" -ForegroundColor Yellow
+          Write-Host "=== Checking RDP listening ports ===" -ForegroundColor Yellow
           netstat -an | findstr :3389
-          
-          Write-Host "Testing local RDP connection (127.0.0.1):" -ForegroundColor Yellow
-          Test-NetConnection -ComputerName 127.0.0.1 -Port 3389
 
+          Write-Host "=== Checking firewall status ===" -ForegroundColor Yellow
+          netsh advfirewall show allprofiles
+
+      - name: 5. Show Connection Info
+        run: |
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
@@ -65,7 +70,7 @@ jobs:
           Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: 4. Keep Server Alive (6 Hours)
+      - name: 6. Keep Server Alive (6 Hours)
         run: |
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
