@@ -13,7 +13,7 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
-          # باز کردن پورت روی همه پروفایلها (حتی Public)
+          # این قانون را نگه میداریم ولی مطمئن نیستیم کار کند، برای همین بعداً فایروال را کامل خاموش میکنیم
           New-NetFirewallRule -DisplayName "Allow RDP Public" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Profile Any
 
       - name: 2. Create Admin Account
@@ -24,7 +24,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "CynetAdmin" -ErrorAction SilentlyContinue
           net user runneradmin Cynet@2026
 
-      - name: 3. Install & Connect Tailscale VPN (WITH RDP RESTART)
+      - name: 3. Install & Connect Tailscale VPN (Firewall OFF)
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
@@ -35,18 +35,20 @@ jobs:
           Start-Sleep -Seconds 5
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
           
-          # ================================================
-          # راه حل اصلی: ریاستارت سرویس RDP بعد از اتصال تیلاسکیل
-          # ================================================
           Start-Sleep -Seconds 8
-          Write-Host "Restarting Remote Desktop Service to bind to Tailscale adapter..." -ForegroundColor Cyan
+          Write-Host "Restarting Remote Desktop Service..." -ForegroundColor Cyan
           Restart-Service TermService -Force
           Start-Sleep -Seconds 5
-          
-          # بررسی اینکه سرویس روی پورت 3389 گوش میدهد
+
+          # ============================================================
+          # کلید حل مشکل: خاموش کردن کامل فایروال ویندوز روی سرور
+          # ============================================================
+          Write-Host "Disabling Windows Firewall completely..." -ForegroundColor Yellow
+          Set-NetFirewallProfile -All -Enabled False
+          # ============================================================
+
           Write-Host "Checking RDP listening ports:" -ForegroundColor Yellow
           netstat -an | findstr :3389
-          # ================================================
 
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           
