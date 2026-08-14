@@ -13,8 +13,9 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
-          # این قانون را نگه میداریم ولی مطمئن نیستیم کار کند، برای همین بعداً فایروال را کامل خاموش میکنیم
-          New-NetFirewallRule -DisplayName "Allow RDP Public" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Profile Any
+          
+          # این قانون کمکی برای باز کردن پورت روی سابنت تیلاسکیل
+          New-NetFirewallRule -DisplayName "Allow RDP Tailscale" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -RemoteAddress 100.64.0.0/10
 
       - name: 2. Create Admin Account
         run: |
@@ -24,7 +25,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "CynetAdmin" -ErrorAction SilentlyContinue
           net user runneradmin Cynet@2026
 
-      - name: 3. Install & Connect Tailscale VPN (Firewall OFF)
+      - name: 3. Install & Connect Tailscale VPN (HARD FIREWALL OFF)
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
@@ -41,14 +42,17 @@ jobs:
           Start-Sleep -Seconds 5
 
           # ============================================================
-          # کلید حل مشکل: خاموش کردن کامل فایروال ویندوز روی سرور
+          # روش قطعی برای خاموش کردن کامل فایروال (با دستور قدیمی netsh)
           # ============================================================
-          Write-Host "Disabling Windows Firewall completely..." -ForegroundColor Yellow
-          Set-NetFirewallProfile -All -Enabled False
+          Write-Host "Disabling Windows Firewall via netsh..." -ForegroundColor Yellow
+          netsh advfirewall set allprofiles state off
           # ============================================================
 
           Write-Host "Checking RDP listening ports:" -ForegroundColor Yellow
           netstat -an | findstr :3389
+          
+          Write-Host "Testing local RDP connection (127.0.0.1):" -ForegroundColor Yellow
+          Test-NetConnection -ComputerName 127.0.0.1 -Port 3389
 
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           
