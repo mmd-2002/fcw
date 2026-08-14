@@ -9,47 +9,67 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: 1. Install Desktop Environment and RDP Server
+      - name: 1. Install Desktop, RDP, and SSH Server
         run: |
           sudo apt update
-          # نصب محیط دسکتاپ XFCE
-          sudo apt install -y xfce4 xfce4-goodies
-          # نصب سرویس‌دهنده RDP
-          sudo apt install -y xrdp
-          # تنظیم XFCE به عنوان نشست پیش‌فرض برای xRDP
+          # نصب محیط دسکتاپ و RDP
+          sudo apt install -y xfce4 xfce4-goodies xrdp
+          # نصب و فعال‌سازی SSH (برای دسترسی اضطراری)
+          sudo apt install -y openssh-server
+          sudo systemctl enable ssh
+          sudo systemctl start ssh
+          # تنظیم نشست XFCE برای xRDP
           echo xfce4-session > ~/.xsession
+          sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-      - name: 2. Create Admin User
+      - name: 2. Create Admin User and Set Password
         run: |
-          # ایجاد کاربر ادمین با رمز مشخص (قابل تغییر)
           sudo useradd -m -s /bin/bash CynetAdmin
           echo "CynetAdmin:Cynet@2026" | sudo chpasswd
-          # اضافه کردن کاربر به گروه sudo
           sudo usermod -aG sudo CynetAdmin
+          # اضافه کردن کاربر به گروه‌های لازم برای RDP
+          sudo adduser CynetAdmin ssl-cert
 
-      - name: 3. Install and Connect Tailscale
+      - name: 3. Configure Firewall (Allow RDP and SSH)
+        run: |
+          # باز کردن پورت‌های 3389 (RDP) و 22 (SSH)
+          sudo ufw allow 3389/tcp
+          sudo ufw allow 22/tcp
+          # اگر فایروال غیرفعال است، آن را فعال کنیم
+          sudo ufw --force enable
+          # همچنین با iptables هم باز می‌کنیم
+          sudo iptables -A INPUT -p tcp --dport 3389 -j ACCEPT
+          sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+      - name: 4. Install and Connect Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          # نصب Tailscale
           curl -fsSL https://tailscale.com/install.sh | sh
-          # اتصال به شبکه Tailscale
-          sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="github-ubuntu-rdp"
+          sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="github-ubuntu-rdp" --ssh
 
-      - name: 4. Show Connection Info
+      - name: 5. Restart RDP Service After Tailscale (Critical)
         run: |
-          # دریافت IP اختصاصی Tailscale
+          # ری‌استارت سرویس‌ها بعد از اتصال Tailscale
+          sudo systemctl restart xrdp
+          sudo systemctl restart ssh
+          # بررسی اینکه پورت 3389 باز شده است
+          sudo netstat -tlnp | grep 3389
+
+      - name: 6. Show Connection Info
+        run: |
           TS_IP=$(tailscale ip -4)
           echo "=================================================="
           echo "  >>> RDP SERVER IS READY! <<<"
           echo "  Tailscale IP : $TS_IP"
           echo "  Username     : CynetAdmin"
           echo "  Password     : Cynet@2026"
-          echo "  >> Use any RDP client to connect to: $TS_IP"
+          echo "  >> RDP: mstsc -> $TS_IP"
+          echo "  >> SSH: tailscale ssh CynetAdmin@$TS_IP"
           echo "=================================================="
 
-      - name: 5. Keep Server Alive (6 Hours)
+      - name: 7. Keep Server Alive (6 Hours)
         run: |
           for i in {1..360}; do
             sleep 60
